@@ -1,0 +1,230 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "Provisioning TGW connect peer.",
+
+  "Parameters" : {
+    "RouterAmiId" : {
+      "Description" : "Amazon machine image identifier of the router (Catalyst 8000v).",
+      "Type" : "String",
+      "Default" : ""
+    }
+  },
+
+  "Metadata" : {
+    "AWS::CloudFormation::Interface" : {
+      "ParameterGroups" : [
+        {
+          "Label" : { "default" : "Router Information" },
+          "Parameters" : [ "RouterAmiId" ]
+        }
+      ],
+      "ParameterLabels" : {
+        "RouterAmiId" : { "default" : "Router AMI ID" }
+      }
+    }
+  },
+  
+  "Resources" : {
+    "Vpc" : {
+      "Type" : "AWS::EC2::VPC",
+      "Properties" : {
+        "CidrBlock" : "10.0.0.0/16",
+        "Tags" : [ { "Key" : "Name", "Value" : "vpc" } ]
+      }
+    },
+    "VpcSubnet" : {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "Vpc" },
+        "CidrBlock" : "10.0.1.0/24",
+        "AvailabilityZone" : { "Fn::Select": [ 0, { "Fn::GetAZs": "" } ] },
+        "Tags" : [ { "Key" : "Name", "Value" : "vpc-subnet" } ]
+      }
+    },
+    "VpcRtb" : {
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+        "VpcId" : { "Ref" : "Vpc" },
+        "Tags" : [ { "Key" : "Name", "Value" : "vpc-rtb" } ]
+      }
+    },
+    "VpcSubnetRouteTableAssociation" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "VpcSubnet" },
+        "RouteTableId" : { "Ref" : "VpcRtb" }
+      }
+    },
+    "VpcRtbRoute" : {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId" : { "Ref" : "VpcRtb" },
+        "DestinationCidrBlock" : "192.168.1.0/24",
+        "TransitGatewayId" : { "Ref" : "Tgw" }
+      },
+      "DependsOn" : "TgwVpcAttach"
+    },
+    "Tgw" : {
+      "Type": "AWS::EC2::TransitGateway",
+      "Properties": {
+        "AmazonSideAsn" : 64512,
+        "DefaultRouteTableAssociation" : "disable",
+        "DefaultRouteTablePropagation" : "disable",
+        "TransitGatewayCidrBlocks" : [ "192.168.1.0/24" ],
+        "Tags" : [ { "Key" : "Name", "Value" : "tgw" } ]
+      }
+    },
+    "TgwRtb" : {
+      "Type" : "AWS::EC2::TransitGatewayRouteTable",
+      "Properties" : {
+        "TransitGatewayId" : { "Ref" : "Tgw" },
+        "Tags" : [ { "Key" : "Name", "Value" : "tgw-rtb" } ]
+      }
+    },
+    "TgwVpcAttach" : {
+      "Type": "AWS::EC2::TransitGatewayAttachment",
+      "Properties": {
+        "SubnetIds": [ { "Ref" : "VpcSubnet" } ],
+        "TransitGatewayId": { "Ref" : "Tgw" },
+        "VpcId": { "Ref" : "Vpc" },
+        "Tags" : [ { "Key" : "Name", "Value" : "tgw-vpc-attach" } ]
+      }
+    },
+    "TgwConnectAttach" : {
+      "Type": "AWS::EC2::TransitGatewayConnect",
+      "Properties": {
+        "Options" : { "Protocol" : "gre" },
+        "TransportTransitGatewayAttachmentId": { "Ref" : "TgwVpcAttach" },
+        "Tags" : [ { "Key" : "Name", "Value" : "tgw-connect-attach" } ]
+      }
+    },
+    "TransitGatewayRouteTableAssociation" : {
+      "Type": "AWS::EC2::TransitGatewayRouteTableAssociation",
+      "Properties": {
+        "TransitGatewayAttachmentId" : { "Ref" : "TgwConnectAttach" }, 
+        "TransitGatewayRouteTableId" : { "Ref" : "TgwRtb" }
+      }
+    },
+    "TransitGatewayRouteTablePropagation" : {
+      "Type": "AWS::EC2::TransitGatewayRouteTablePropagation",
+      "Properties": {
+        "TransitGatewayAttachmentId" : { "Ref" : "TgwConnectAttach" }, 
+        "TransitGatewayRouteTableId" : { "Ref" : "TgwRtb" }
+      }
+    },
+    "RouterSg" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupName" : "router-sg",
+        "GroupDescription" : "router-sg",
+        "VpcId" : { "Ref" : "Vpc" },
+        "SecurityGroupIngress" : [ { "IpProtocol" : "-1", "FromPort" : "-1",  "ToPort" : "-1",  "CidrIp" : "10.0.0.0/8" } ],
+        "SecurityGroupEgress" : [ { "IpProtocol" : "-1", "FromPort" : "0", "ToPort" : "65535", "CidrIp" : "0.0.0.0/0" } ],
+        "Tags" : [ { "Key" : "Name", "Value" : "router-sg" } ]
+      }
+    },
+    "RouterEni" : {
+      "Type" : "AWS::EC2::NetworkInterface",
+      "Properties" : {
+        "GroupSet" : [ { "Ref" : "RouterSg" } ],
+        "SubnetId": { "Ref" : "VpcSubnet" },
+        "PrivateIpAddress" : "10.0.1.254",
+        "SourceDestCheck" : "false",
+        "Tags" : [ { "Key" : "Name", "Value" : "router-eni" } ]
+      }
+    },
+    "Router" : {
+      "Type" : "AWS::EC2::Instance",
+      "Properties" : {
+        "InstanceType" : "t3.medium",
+        "ImageId" : { "Ref" : "RouterAmiId" },
+        "NetworkInterfaces": [ { "DeviceIndex": "0", "NetworkInterfaceId": { "Ref" : "RouterEni" } } ],
+        "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "ios-config-2=\"interface GigabitEthernet1\"\n",
+          "ios-config-3=\" ip address 10.0.1.254 255.255.255.0\"\n",
+          "ios-config-4=\"interface Tunnel1\"\n",
+          "ios-config-5=\" ip address 169.254.6.1 255.255.255.248\"\n",
+          "ios-config-6=\" tunnel source GigabitEthernet1\"\n",
+          "ios-config-7=\" tunnel destination 192.168.1.1\"\n",
+          "ios-config-8=\"ip route 192.168.1.0 255.255.255.0 10.0.1.1\"\n",
+          "ios-config-9=\"router bgp 65000\"\n",
+          "ios-config-10=\" timer bgp 10 30\"\n",
+          "ios-config-11=\" neighbor 169.254.6.2 remote-as 64512\"\n",
+          "ios-config-12=\" neighbor 169.254.6.2 ebgp-multihop\"\n",
+          "ios-config-13=\" neighbor 169.254.6.3 remote-as 64512\"\n",
+          "ios-config-14=\" neighbor 169.254.6.3 ebgp-multihop\"\n"
+        ] ] } },
+        "Tags" : [ { "Key" : "Name", "Value" : "router" } ]
+      }
+    },
+    "TgwConnectPeerCreatorRole" : {
+      "Type" : "AWS::IAM::Role",
+      "Properties" : {
+        "AssumeRolePolicyDocument" : {
+          "Version": "2012-10-17",
+          "Statement": [ {
+            "Effect": "Allow",
+            "Principal": { "Service" : [ "lambda.amazonaws.com" ] },
+            "Action": [ "sts:AssumeRole" ]
+          } ]
+        },
+        "Path" : "/",
+        "ManagedPolicyArns" : [ "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" ],
+        "Policies" : [ {
+          "PolicyName": "TgwConnectPeerCreatorPolicy",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [ "ec2:CreateTransitGatewayConnectPeer" , "ec2:CreateTags" ],
+                "Resource": "*"
+              }
+            ]
+          }
+        } ]
+      }
+    },
+    "FunctionCreateTgwConnectPeer" : {
+      "Type" : "AWS::Lambda::Function",
+      "Properties" : {
+        "Code" : {
+          "ZipFile" : { "Fn::Join": [ "", [
+            "import json\n",
+            "import boto3\n",
+            "import cfnresponse\n",
+            "def lambda_handler(event, context):\n",
+            "  try:\n",
+            "    client = boto3.client('ec2')\n",
+            "    response = client.create_transit_gateway_connect_peer(\n",
+            "      TransitGatewayAttachmentId='" , { "Ref" : "TgwConnectAttach" } , "',\n",
+            "      TransitGatewayAddress='192.168.1.1',\n",
+            "      PeerAddress='10.0.1.254',\n",
+            "      BgpOptions={'PeerAsn':65000},\n",
+            "      InsideCidrBlocks=['169.254.6.0/29'],\n",
+            "      TagSpecifications=[{\n",
+            "        'ResourceType':'transit-gateway-connect-peer',\n",
+            "        'Tags':[{'Key':'Name','Value':'tgw-connect-attach-peer'}],\n",
+            "      }],\n",
+            "      DryRun=False\n",
+            "    )\n",
+            "    cfnresponse.send(event, context, cfnresponse.SUCCESS, {})\n",
+            "  except Exception as e:\n",
+            "    cfnresponse.send(event, context, cfnresponse.FAILED, {})"
+          ] ] }
+        },
+        "Handler": "index.lambda_handler",
+        "Role": { "Fn::GetAtt" : [ "TgwConnectPeerCreatorRole", "Arn" ] },
+        "Runtime": "python3.9",
+        "Timeout": 60
+      }
+    },
+    "CustomCreateTgwConnectPeer" : {
+      "Type" : "Custom::FunctionCreateTgwConnectPeer",
+      "Properties" : {
+        "ServiceToken" : { "Fn::GetAtt" : [ "FunctionCreateTgwConnectPeer", "Arn" ] }
+      }
+    }
+  }
+}
