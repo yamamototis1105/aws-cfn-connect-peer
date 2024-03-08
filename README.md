@@ -1,12 +1,12 @@
 ## 概要
-　本コードは、TGW Connect Peerのカスタムリソースを定義したCloud Formationのサンプルです。<br/>
+　本コードは、TGW Connect Attachmentを作成するCloud Formationテンプレートのサンプルです。<br/>
 以下の通り、TGW Connect AttachmentでTGW～EC2(Catalyst 8000v)間を接続します。<br/>
 
 ![topology](https://github.com/yamamototis1105/aws-cfn-tgw-connect-peer/assets/114621183/4444a592-19b1-488d-b742-bfddc6fbc6b5)
 
 ## 利用方法
 * スタック作成時
-  * Cloud Formationへアクセスし、「tgw-connect-peer.json」をアップロードしてください。
+  * Cloud Formationへアクセスし、「tgw-connect-attachment.json」をアップロードしてください。
   * スタックパラメータとして、EC2(Catalyst 8000v)のAMI IDを入力してください。
   * スタックオプションはデフォルトのままで、確認のうえ送信ボタンを押下してください。
 <br/>
